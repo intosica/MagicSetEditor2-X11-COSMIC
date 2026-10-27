@@ -1,0 +1,22 @@
+[package]
+name = "mse_app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "mse"
+path = "src/main.rs"
+
+[dependencies]
+mse_core = { path = "../mse_core" }
+anyhow.workspace = true
+tracing.workspace = true
+
+# libcosmic's API moves quickly. Pin `rev = "..."` once it builds for you, and
+# compare against https://github.com/pop-os/cosmic-app-template if anything
+# below stops compiling.
+[dependencies.libcosmic]
+git = "https://github.com/pop-os/libcosmic"
+default-features = false
+features = ["a11y", "tokio", "winit", "wayland", "wgpu"]

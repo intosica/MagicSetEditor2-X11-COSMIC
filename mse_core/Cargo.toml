@@ -1,0 +1,12 @@
+[package]
+name = "mse_core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+zip.workspace = true
+image.workspace = true
+tiny-skia.workspace = true
+tracing.workspace = true
