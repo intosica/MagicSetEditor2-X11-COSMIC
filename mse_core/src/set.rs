@@ -52,7 +52,7 @@ impl Set {
             match n.key.as_str() {
                 "game" => set.game = n.text(),
                 "stylesheet" => set.stylesheet = n.text(),
-                "set info" => {
+                "set_info" => {
                     for c in &n.children {
                         set.info.insert(c.key.clone(), c.text());
                     }

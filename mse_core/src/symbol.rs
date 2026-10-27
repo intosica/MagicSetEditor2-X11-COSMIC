@@ -10,9 +10,14 @@
 //! Here both layers are plain 8-bit coverage masks and the final ring is
 //! computed explicitly: `ring = border * (1 - interior)`. No raster ops.
 
+use std::{io::{Cursor, Read}, path::Path};
+
 use tiny_skia::{FillRule, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
-use crate::{Error, Result};
+use crate::{
+    mse_format::{self, Node},
+    Error, Result,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Combine {
@@ -113,6 +118,119 @@ impl SymbolShape {
     }
 }
 
+
+// ----------------------------------------------------------------------------- : Loading
+
+fn perr(msg: impl Into<String>) -> Error {
+    Error::Parse { line: 0, msg: msg.into() }
+}
+
+fn parse_vec2(s: &str) -> Option<(f32, f32)> {
+    let (a, b) = s.trim().trim_start_matches('(').trim_end_matches(')').split_once(',')?;
+    Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+}
+
+impl Combine {
+    fn parse(s: &str) -> Self {
+        match s.trim() {
+            "merge" => Combine::Merge,
+            "subtract" => Combine::Subtract,
+            "intersection" => Combine::Intersection,
+            "difference" => Combine::Difference,
+            "border" => Combine::Border,
+            _ => Combine::Overlap, // MSE's default
+        }
+    }
+}
+
+impl SymbolShape {
+    fn from_node(part: &Node) -> Result<Self> {
+        let mut points = Vec::new();
+        for p in part.children_named("point") {
+            let pos = p
+                .child_text("position")
+                .and_then(|v| parse_vec2(&v))
+                .ok_or_else(|| perr("point without a valid `position`"))?;
+            let handle = |key: &str| p.child_text(key).and_then(|v| parse_vec2(&v)).unwrap_or((0.0, 0.0));
+            let mode = match p.child_text("line_after").as_deref() {
+                Some("curve") => SegmentMode::Curve,
+                _ => SegmentMode::Line,
+            };
+            points.push(ControlPoint {
+                pos,
+                handle_before: handle("handle_before"),
+                handle_after: handle("handle_after"),
+                mode,
+            });
+        }
+        Ok(SymbolShape {
+            name: part.child_text("name").unwrap_or_default(),
+            combine: Combine::parse(&part.child_text("combine").unwrap_or_default()),
+            points,
+        })
+    }
+}
+
+impl Symbol {
+    pub fn from_nodes(nodes: &[Node]) -> Result<Self> {
+        let mut shapes = Vec::new();
+        for part in nodes.iter().filter(|n| n.key == "part") {
+            match part.child_text("type").unwrap_or_default().as_str() {
+                "shape" | "" => shapes.push(SymbolShape::from_node(part)?),
+                other => tracing::warn!("symbol part type `{other}` not supported yet (symmetry/group)"),
+            }
+        }
+        // Files list the topmost part first; we draw bottom-to-top.
+        shapes.reverse();
+        Ok(Symbol { shapes })
+    }
+
+    pub fn from_text(text: &str) -> Result<Self> {
+        Self::from_nodes(&mse_format::parse(text)?)
+    }
+
+    /// Accepts either a plain-text symbol, or a zip container (what the symbol
+    /// editor's "Save" writes): a `set` file whose `set_info: symbol:` names the
+    /// real symbol entry, e.g. `symbol27.mse-symbol`.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if !bytes.starts_with(b"PK") {
+            return Self::from_text(std::str::from_utf8(bytes).map_err(|e| perr(e.to_string()))?);
+        }
+        let mut zip = zip::ZipArchive::new(Cursor::new(bytes))?;
+        let mut wanted: Option<String> = None;
+        if let Ok(mut f) = zip.by_name("set") {
+            let mut txt = String::new();
+            if f.read_to_string(&mut txt).is_ok() {
+                let nodes = mse_format::parse(&txt)?;
+                wanted = nodes
+                    .iter()
+                    .find(|n| n.key == "set_info")
+                    .and_then(|n| n.child_text("symbol"))
+                    .filter(|s| !s.is_empty());
+            }
+        }
+        let name = match wanted {
+            Some(n) if zip.by_name(&n).is_ok() => n,
+            _ => zip
+                .file_names()
+                .find(|n| n.ends_with(".mse-symbol"))
+                .map(str::to_owned)
+                .ok_or_else(|| perr("no symbol entry found in archive"))?,
+        };
+        let mut txt = String::new();
+        zip.by_name(&name)?
+            .read_to_string(&mut txt)
+            .map_err(|e| perr(format!("{name}: {e}")))?;
+        Self::from_text(&txt)
+    }
+
+    pub fn load(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let bytes = std::fs::read(path).map_err(|source| Error::Io { path: path.into(), source })?;
+        Self::from_bytes(&bytes)
+    }
+}
+
 fn coverage(pm: &Pixmap) -> Vec<u8> {
     pm.data().chunks_exact(4).map(|p| p[3]).collect()
 }
@@ -209,6 +327,17 @@ mod tests {
                 combine: Combine::Merge,
             }],
         }
+    }
+
+    #[test]
+    fn parses_mse_symbol_text() {
+        let txt = "mse_version: 0.3.5\npart:\n\ttype: shape\n\tname: \n\tcombine: merge\n\tpoint:\n\t\tposition: (0.1,0.2)\n\t\tlock: free\n\t\tline_after: line\n\tpoint:\n\t\tposition: (0.5,0.2)\n\t\tlock: free\n\t\tline_after: curve\n\t\thandle_before: (-0.1,0.0)\n\t\thandle_after: (0.1,0.0)\n";
+        let s = Symbol::from_text(txt).unwrap();
+        assert_eq!(s.shapes.len(), 1);
+        assert_eq!(s.shapes[0].combine, Combine::Merge);
+        assert_eq!(s.shapes[0].points.len(), 2);
+        assert_eq!(s.shapes[0].points[1].mode, SegmentMode::Curve);
+        assert_eq!(s.shapes[0].points[1].handle_after, (0.1, 0.0));
     }
 
     /// Regression test for the Flatpak bug: border must be an OUTLINE only.

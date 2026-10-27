@@ -4,3 +4,4 @@
 .idea/
 # legacy reference sources (GPL, large) – keep locally, don't commit
 /reference/
+*.png

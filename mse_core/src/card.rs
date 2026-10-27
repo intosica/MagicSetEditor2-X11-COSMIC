@@ -24,7 +24,7 @@ impl Card {
             match c.key.as_str() {
                 "stylesheet" => card.stylesheet = Some(c.text()),
                 "notes" => card.notes = c.text(),
-                "has styling" | "styling data" | "time created" | "time modified" => {}
+                "has_styling" | "styling_data" | "time_created" | "time_modified" => {}
                 "" => {}
                 k => {
                     card.fields.insert(k.to_owned(), c.text());

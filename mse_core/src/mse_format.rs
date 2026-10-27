@@ -14,7 +14,7 @@ use crate::{Error, Result};
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Node {
-    /// Text before the first `:` (empty for continuation lines).
+    /// Text before the first `:`, normalised (spaces -> `_`); empty for continuation lines.
     pub key: String,
     /// Text after the first `:`, trimmed.
     pub value: String,
@@ -24,11 +24,19 @@ pub struct Node {
     pub children: Vec<Node>,
 }
 
+/// MSE treats `rule text` and `rule_text` as the same key. Keys are stored
+/// normalised to the underscore form; lookups normalise their argument too.
+pub fn norm_key(s: &str) -> String {
+    s.trim().replace(' ', "_")
+}
+
 impl Node {
     pub fn child(&self, key: &str) -> Option<&Node> {
+        let key = norm_key(key);
         self.children.iter().find(|c| c.key == key)
     }
-    pub fn children_named<'a>(&'a self, key: &'a str) -> impl Iterator<Item = &'a Node> {
+    pub fn children_named<'a>(&'a self, key: &str) -> impl Iterator<Item = &'a Node> {
+        let key = norm_key(key);
         self.children.iter().filter(move |c| c.key == key)
     }
     /// Value of this node, joining continuation lines with `\n`.
@@ -50,7 +58,7 @@ impl Node {
 
 struct Line<'a> {
     depth: usize,
-    key: &'a str,
+    key: String,
     value: &'a str,
     raw: &'a str,
 }
@@ -69,10 +77,13 @@ pub fn parse(src: &str) -> Result<Vec<Node>> {
             continue; // comment
         }
         let (key, value) = match raw.split_once(':') {
-            Some((k, v)) if !k.contains(' ') || k.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '_') => {
-                (k.trim(), v.trim())
+            Some((k, v))
+                if !k.trim().is_empty()
+                    && k.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '_' || c == '-') =>
+            {
+                (norm_key(k), v.trim())
             }
-            _ => ("", raw),
+            _ => (String::new(), raw),
         };
         if depth == 0 && key.is_empty() {
             return Err(Error::Parse { line: i + 1, msg: format!("expected `key: value`, got `{raw}`") });
@@ -96,7 +107,7 @@ fn build(lines: &[Line], pos: &mut usize, depth: usize) -> Vec<Node> {
         }
         *pos += 1;
         let mut node = Node {
-            key: l.key.to_owned(),
+            key: l.key.clone(),
             value: l.value.to_owned(),
             raw: l.raw.to_owned(),
             children: Vec::new(),
@@ -115,7 +126,7 @@ mod tests {
 
     #[test]
     fn nested_and_multiline() {
-        let src = "mse version: 2.0.0\ngame: magic\ncard:\n\tname: Bolt\n\trule_text:\n\t\tDeal 3 damage.\n\t\tNote: any target\n";
+        let src = "mse_version: 2.0.0\ngame: magic\ncard:\n\tname: Bolt\n\trule_text:\n\t\tDeal 3 damage.\n\t\tNote: any target\n";
         let n = parse(src).unwrap();
         assert_eq!(n[1].value, "magic");
         let card = &n[2];

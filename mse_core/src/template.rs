@@ -46,8 +46,8 @@ impl Game {
         let mut g = Game::default();
         for n in nodes {
             match n.key.as_str() {
-                "full name" | "name" if g.name.is_empty() => g.name = n.text(),
-                "card field" => g.card_fields.push(FieldDef {
+                "full_name" | "name" if g.name.is_empty() => g.name = n.text(),
+                "card_field" => g.card_fields.push(FieldDef {
                     name: n.child_text("name").unwrap_or_default(),
                     kind: n.child_text("type").unwrap_or_default(),
                 }),
@@ -63,9 +63,9 @@ impl StyleSheet {
         let mut s = Self::default_for(name);
         for n in nodes {
             match n.key.as_str() {
-                "card width" => s.card_width = n.value.parse().unwrap_or(s.card_width),
-                "card height" => s.card_height = n.value.parse().unwrap_or(s.card_height),
-                "card dpi" => s.card_dpi = n.value.parse().unwrap_or(s.card_dpi),
+                "card_width" => s.card_width = n.value.parse().unwrap_or(s.card_width),
+                "card_height" => s.card_height = n.value.parse().unwrap_or(s.card_height),
+                "card_dpi" => s.card_dpi = n.value.parse().unwrap_or(s.card_dpi),
                 _ => {}
             }
         }
