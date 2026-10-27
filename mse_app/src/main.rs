@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use cosmic::{
     app::{Core, Settings, Task},
-    iced::{Alignment, Length},
+    iced::Length,
     widget, Application, Element,
 };
 use mse_core::{render::render_card, Card, Set, Template};
@@ -54,13 +54,16 @@ impl App {
     }
 
     fn refresh_preview(&mut self) {
-        self.preview = self.current().and_then(|c| match render_card(c, &self.template) {
-            Ok(r) => Some(widget::image::Handle::from_rgba(r.width, r.height, r.rgba)),
-            Err(e) => {
+        // Render first (immutable borrow ends here), then touch self.status.
+        let result = self.set.cards.get(self.selected).map(|c| render_card(c, &self.template));
+        self.preview = match result {
+            Some(Ok(r)) => Some(widget::image::Handle::from_rgba(r.width, r.height, r.rgba)),
+            Some(Err(e)) => {
                 self.status = format!("render failed: {e}");
                 None
             }
-        });
+            None => None,
+        };
     }
 }
 
@@ -151,7 +154,7 @@ impl Application for App {
 
     fn view(&self) -> Element<'_, Message> {
         // Left: card list
-        let mut list = widget::column().spacing(4);
+        let mut items: Vec<Element<Message>> = Vec::new();
         for (i, c) in self.set.cards.iter().enumerate() {
             let label = c.display_name().to_owned();
             let btn = if i == self.selected {
@@ -159,37 +162,42 @@ impl Application for App {
             } else {
                 widget::button::standard(label)
             };
-            list = list.push(btn.on_press(Message::SelectCard(i)).width(Length::Fill));
+            items.push(btn.on_press(Message::SelectCard(i)).width(Length::Fill).into());
         }
+        let list = widget::column(items).spacing(4);
         let left = widget::container(widget::scrollable(list).height(Length::Fill))
             .width(Length::Fixed(260.0))
             .height(Length::Fill)
             .padding(8);
 
         // Right: form + preview
-        let mut form = widget::column().spacing(8);
+        let mut fields: Vec<Element<Message>> = Vec::new();
         if let Some(card) = self.current() {
             for &(key, label) in FORM_FIELDS {
-                form = form.push(
+                fields.push(
                     widget::text_input(label, card.get(key).to_owned())
                         .label(label)
-                        .on_input(move |v| Message::FieldChanged(key, v)),
+                        .on_input(move |v| Message::FieldChanged(key, v))
+                        .into(),
                 );
             }
         }
+        let form = widget::column(fields).spacing(8);
         let preview: Element<Message> = match &self.preview {
             Some(h) => widget::image(h.clone()).into(),
             None => widget::text("No preview").into(),
         };
-        let right = widget::row()
-            .spacing(16)
-            .align_y(Alignment::Start)
-            .push(widget::container(form).width(Length::FillPortion(1)).padding(8))
-            .push(widget::container(preview).width(Length::FillPortion(1)).padding(8));
+        let right = widget::row(vec![
+            widget::container(form).width(Length::FillPortion(1)).padding(8).into(),
+            widget::container(preview).width(Length::FillPortion(1)).padding(8).into(),
+        ])
+        .spacing(16);
 
-        widget::column()
-            .push(widget::row().push(left).push(right).height(Length::Fill))
-            .push(widget::container(widget::text(self.status.clone())).padding(6))
-            .into()
+        let body = widget::row(vec![left.into(), right.into()]).height(Length::Fill);
+        widget::column(vec![
+            body.into(),
+            widget::container(widget::text(self.status.clone())).padding(6).into(),
+        ])
+        .into()
     }
 }

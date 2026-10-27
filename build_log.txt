@@ -1,0 +1,2 @@
+   Compiling mse_app v0.1.0 (/media/montel/Elements/MagicSetEditor2-X11-COSMIC-initial/mse/mse_app)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.86s
